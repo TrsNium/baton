@@ -24,11 +24,19 @@ import (
 
 // BatonSpec defines the desired state of Baton
 type BatonSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	Deployment  `json:"deployment"`
+	Rules       []Rule `json:"rules"`
+	IntervalSec int32  `json:"interval_sec"`
+}
 
-	// Foo is an example field of Baton. Edit Baton_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+type Deployment struct {
+	Name      string `json:"name"`
+	NameSpace string `json:"namespace"`
+}
+
+type Rule struct {
+	NodeGroup string `json:"node_group"`
+	KeepPods  int32  `json:"keep_pods"`
 }
 
 // BatonStatus defines the observed state of Baton
