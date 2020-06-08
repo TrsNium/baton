@@ -1,0 +1,7 @@
+domain: baton
+repo: trsnium.com/baton
+resources:
+- group: baton
+  kind: Baton
+  version: v1
+version: "2"
