@@ -17,6 +17,7 @@ package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"time"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -25,8 +26,8 @@ import (
 // BatonSpec defines the desired state of Baton
 type BatonSpec struct {
 	Deployment  `json:"deployment"`
-	Rules       []Rule `json:"rules"`
-	IntervalSec int32  `json:"interval_sec"`
+	Strategies  []Strategy `json:"strategies"`
+	IntervalSec int32      `json:"interval_sec"`
 }
 
 type Deployment struct {
@@ -34,15 +35,15 @@ type Deployment struct {
 	NameSpace string `json:"namespace"`
 }
 
-type Rule struct {
+type Strategy struct {
 	NodeGroup string `json:"node_group"`
 	KeepPods  int32  `json:"keep_pods"`
 }
 
 // BatonStatus defines the observed state of Baton
 type BatonStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	LastRunStartedAt    time.time `json:"last_run_started_at"`
+	LastSuccessfulRunAt time.time `json:"last_successful_run_at"`
 }
 
 // +kubebuilder:object:root=true

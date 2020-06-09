@@ -19,6 +19,7 @@ import (
 	"context"
 
 	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,24 +30,41 @@ import (
 // BatonReconciler reconciles a Baton object
 type BatonReconciler struct {
 	client.Client
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	Log                          logr.Logger
+	Scheme                       *runtime.Scheme
+	BatonStrategiesRunnerManager *BatonStrategiesRunnerManager
 }
 
 // +kubebuilder:rbac:groups=baton.baton,resources=batons,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baton.baton,resources=batons/status,verbs=get;update;patch
 
 func (r *BatonReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	_ = context.Background()
-	_ = r.Log.WithValues("baton", req.NamespacedName)
+	ctx := context.Background()
 
-	// your logic here
+	batons := &batonv1.BatonList{}
+	if err := r.Client.List(ctx, batons, &client.ListOptions{}); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
 
+	for _, baton := range batons.Items {
+		if !r.BatonStrategiesRunnerManager.IsManaged(baton) {
+			r.BatonStrategiesRunnerManager.Add(baton)
+			continue
+		}
+
+		if r.BatonStrategiesRunnerManager.IsUpdated(baton) {
+			r.BatonStrategiesRunnerManager.Delete(baton)
+			r.BatonStrategiesRunnerManager.Add(baton)
+		}
+	}
+
+	r.BatonStrategiesRunnerManager.DeleteNotExists(batons)
 	return ctrl.Result{}, nil
 }
 
 func (r *BatonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&batonv1.Baton{}).
+		Owns(&appsv1.Deployment{}).
 		Complete(r)
 }
