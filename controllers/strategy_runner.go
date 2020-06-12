@@ -220,6 +220,7 @@ Monitor:
 
 			for _, pod := range newPods {
 				phase := pod.PodStatus.PodPhase
+				nodeName := pod.Spec.NodeName
 				if nodeName == nil {
 					continue Monitor
 				} else if phase == "Failed" {
