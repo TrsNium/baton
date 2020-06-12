@@ -88,12 +88,11 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 		return false
 	})
 
-	nodeGroups := make([]string)
 	groupStrategies := make(map[string]batonv1.Strategy)
 	groupPods := make(GroupPods)
 	for _, strategy := range r.baton.Spec.Strategies {
-		nodeGroups = append(nodeGroups, strategy.NodeGroup)
 		groudStrategies[strategy.NodeGroup] = strategy
+		groupPods.NewGroup(strategy.NodeGroup)
 	}
 
 	// NOTE pod which Phase is 'Pending' or scheduled to in other strategy nodeGroup is grouped up to '`other'

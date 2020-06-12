@@ -8,6 +8,12 @@ import (
 
 type GroupPods map[string][]corev1.Pod
 
+func (r *GroupPods) NewGroup(group string) {
+	if _, ok := r[group]; !ok {
+		r[group] = []corev1.Pod{}
+	}
+}
+
 func (r *GroupPods) AddPod(group string, pod corev1.Pod) {
 	if _, ok := r[group]; ok {
 		r[group] = append(r[group], pod)
