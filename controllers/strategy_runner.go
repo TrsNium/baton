@@ -101,7 +101,10 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 	}
 
 	// Migrate surplus and shortage pods from other nodes according to strategy
-	err := r.deleteSuplusPod(namespace, labels, deploymentUID, groupdStrategies, groupPods)
+	err := r.migrateSuplusPods(namespace, labels, deploymentUID, groupStrategies, *groupPods)
+	if err != nil {
+		r.logger.Error(err, "failed to migrate suplus Pod to other Node")
+	}
 }
 
 func (r *BatonStrategiesyRunner) validateStrategies(deployment appv1.Deployment) error {
@@ -117,14 +120,13 @@ func (r *BatonStrategiesyRunner) validateStrategies(deployment appv1.Deployment)
 	return nil
 }
 
-func (r *BatonStrategiesyRunner) deleteSuplusPod(
+func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 	namespace string,
 	labels map[string]string,
 	deploymentUID types.UID,
 	groupedStrategies map[string]batonv1.Strategy,
 	groupPods *map[string][]corev1.Pod,
 ) error {
-	ctx := context.Background()
 	for _, group := range groupPods.GetGroup() {
 		if group == "`other" {
 			continue
@@ -150,7 +152,7 @@ func (r *BatonStrategiesyRunner) deleteSuplusPod(
 
 		for _, deletedPod := range groupPods[group][keepPods:] {
 			hash := deletedPod.ObjectMeta.GetLabels()["pod-template-hash"]
-			err := r.client.Delete(ctx, deletedPod)
+			err := DeletePod(r.client, deletedPod)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to delete Pod{Name: %s}", deletedPod.ObjectMeta.Name))
 				continue

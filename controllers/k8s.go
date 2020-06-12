@@ -7,6 +7,7 @@ import (
 )
 
 func GetDeployment(c client.Client, namespace string, name string) (appsv1.Deployment, error) {
+	ctx := context.Background()
 	deployment := appsv1.Deployment{}
 	err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &deployment)
 	if err != nil {
@@ -16,6 +17,7 @@ func GetDeployment(c client.Client, namespace string, name string) (appsv1.Deplo
 }
 
 func ListPodMatchLabels(c client.Client, namespace string, labels map[string]string) ([]corev1.Pod, error) {
+	ctx := context.Background()
 	podList := corev1.PodList{}
 	err := c.List(ctx, &podList,
 		client.InNamespace(deployment.ObjectMeta.Namespace),
@@ -28,7 +30,14 @@ func ListPodMatchLabels(c client.Client, namespace string, labels map[string]str
 	return podList.Items, nil
 }
 
+func DeletePod(c client.Client, pod corev1.Pod) error {
+	ctx := context.Background()
+	err := c.Delete(ctx, pod)
+	return err
+}
+
 func GetPod(c client.Client, namespace string, name string) (corev1.Pod, error) {
+	ctx := context.Background()
 	ctx := context.Background()
 	pod := corev1.Pod{}
 	c.Get(ctx, client.ObjectKey{Namespace: deploymentInfo.Namespace, Name: deploymentInfo.Name}, &pod)
