@@ -13,6 +13,13 @@ type BatonStrategiesRunnerManager struct {
 	batonStrategiesRunnerMap map[string]BatonStrategiesyRunner
 }
 
+func NewBatonStrategiesyRunnerManager(client client.Client) *BatonStrategiesRunnerManager {
+	return &BatonStrategiesRunnerManager{
+		client:                   client,
+		batonStrategiesRunnerMap: make(map[string]BatonStrategiesyRunner),
+	}
+}
+
 func (r *BatonManager) IsManaged(baton batonv1.Baton) bool {
 	metadata := baton.ObjectMeta
 	key := fmt.Sprintf("%s-%s", metadata.Namespace, metadata.Name)
@@ -54,7 +61,7 @@ func (r *BatonManager) DeleteNotExists(batons batonv1.BatonList) {
 
 	batonStrategiesRunneKeys = r.getBatonStrategiesRunnerKeys()
 	for _, batonStrategiesRunneKey := range batonStrategiesRunneKeys {
-		if !contains(expectedKeys, batonStrategiesRunneKey) {
+		if !Contains(expectedKeys, batonStrategiesRunneKey) {
 			r.Delete(batonMap[batonStrategiesRunneKey])
 		}
 	}
@@ -66,20 +73,4 @@ func (r *BatonManager) getBatonStrategiesRunnerKeys() []string {
 		ks = append(ks, k)
 	}
 	return ks
-}
-
-func contains(s []string, e string) bool {
-	for _, v := range s {
-		if e == v {
-			return true
-		}
-	}
-	return false
-}
-
-func NewBatonStrategiesyRunnerManager(client client.Client) *BatonStrategiesRunnerManager {
-	return &BatonStrategiesRunnerManager{
-		client:                   client,
-		batonStrategiesRunnerMap: make(map[string]BatonStrategiesyRunner),
-	}
 }
