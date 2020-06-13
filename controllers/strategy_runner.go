@@ -264,7 +264,7 @@ Monitor:
 				return false
 			})
 
-			newPods, err := getNotExistPods(observedPods, filterdCurrentPods)
+			newPods, err := getNewPods(observedPods, filterdCurrentPods)
 			if len(newPods) == 0 {
 				continue Monitor
 			}
@@ -284,7 +284,7 @@ Monitor:
 	return nil, errors.New("could not found new pods")
 }
 
-func getNotExistPods(observedPods []corev1.Pod, currentPods []corev1.Pod) []corev1.Pod {
+func getNewPods(observedPods []corev1.Pod, currentPods []corev1.Pod) []corev1.Pod {
 	includePods := func(pod corev1.Pod, pods []corev1.Pod) bool {
 		for p := range pods {
 			if p.ObjectMeta.Name == pod.ObjectMeta.Name {
