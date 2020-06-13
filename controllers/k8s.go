@@ -77,3 +77,23 @@ func RunCordonOrUncordon(c client.Client, node *corev1.Node, desired bool) error
 
 	return nil
 }
+
+func FilterNodes(nodes []corev1.Node, f func(corev1.Node) bool) []corev1.Node {
+	filteredNodes := []corev1.Node{}
+	for _, node := range nodes {
+		if f(node) {
+			filteredNodes = append(filteredNodes, node)
+		}
+	}
+	return filteredNodes
+}
+
+func FilterPods(pods []corev1.Pod, f func(corev1.Pod) bool) []corev1.Pod {
+	filterdPods := []corev1.Pod{}
+	for _, pod := range pods {
+		if f(pod) {
+			filterdPods = append(filterdPods, pod)
+		}
+	}
+	return filterdPods
+}

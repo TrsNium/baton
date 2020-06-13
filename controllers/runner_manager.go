@@ -61,7 +61,7 @@ func (r *BatonManager) DeleteNotExists(batons batonv1.BatonList) {
 
 	batonStrategiesRunneKeys = r.getBatonStrategiesRunnerKeys()
 	for _, batonStrategiesRunneKey := range batonStrategiesRunneKeys {
-		if !Contains(expectedKeys, batonStrategiesRunneKey) {
+		if !contains(expectedKeys, batonStrategiesRunneKey) {
 			r.Delete(batonMap[batonStrategiesRunneKey])
 		}
 	}
@@ -73,4 +73,13 @@ func (r *BatonManager) getBatonStrategiesRunnerKeys() []string {
 		ks = append(ks, k)
 	}
 	return ks
+}
+
+func contains(s []string, e string) bool {
+	for _, v := range s {
+		if e == v {
+			return true
+		}
+	}
+	return false
 }
