@@ -105,6 +105,11 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 	if err != nil {
 		r.logger.Error(err, "failed to migrate suplus Pod to other Node")
 	}
+
+	err := r.migrateLessPodFromOther(namespace, labels, deploymentUID, groupStrategies, *groupPods)
+	if err != nil {
+		r.logger.Error(err, "failed to migrate less Pod from other Node")
+	}
 }
 
 func (r *BatonStrategiesyRunner) validateStrategies(deployment appv1.Deployment) error {
@@ -124,23 +129,14 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 	namespace string,
 	labels map[string]string,
 	deploymentUID types.UID,
-	groupedStrategies map[string]batonv1.Strategy,
-	groupPods *map[string][]corev1.Pod,
+	groupStrategies map[string]batonv1.Strategy,
+	groupPods *GroupPods,
 ) error {
-	for _, group := range groupPods.GetGroup() {
-		if group == "`other" {
-			continue
+	for _, group := range groupPods.SuplusGroups(groupStragroupsNodestegies, false) {
+		cordonedNodes, err := GroupNodes(r.client, group)
+		if err != nil {
+			r.logger.Error(err, "failed to list Nodes")
 		}
-
-		keepPods := groupedStrategies[group].KeepPods
-		if !len(groupPods[group]) > KeepPods {
-			continue
-		}
-
-		nodes := GetNodes(r.client)
-		cordonedNodes := FilterNode(nodes, func(n corev1.Node) bool {
-			return strings.Contains(n.Spec.ObjectMeta.Name, groupedStrategies[group])
-		})
 
 		for _, node := range cordonedNodes {
 			err := RunCordonOrUncordon(r.client, &node, true)
@@ -150,7 +146,8 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 			}
 		}
 
-		for _, deletedPod := range groupPods[group][keepPods:] {
+		keepPods := groupStrategies[group].KeepPods
+		for _, deletedPod := range r.groupPods[group][keepPods:] {
 			hash := deletedPod.ObjectMeta.GetLabels()["pod-template-hash"]
 			err := DeletePod(r.client, deletedPod)
 			if err != nil {
@@ -174,6 +171,59 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 			err := RunCordonOrUncordon(r.client, &node, false)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", node.ObjectMeta.Name))
+				continue
+			}
+		}
+	}
+}
+
+func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
+	namespace string,
+	labels map[string]string,
+	deploymentUID types.UID,
+	groupStrategies map[string]batonv1.Strategy,
+	groupPods *GroupPods,
+) error {
+	for _, group := range groupPods.LessGroups(groupStrategies, false) {
+		suplusGroups := r.SuplusGroups(groupStrategies, true)
+		cordonedNodes, err := r.GroupsNodes(r.client, suplusGroups)
+		if err != nil {
+			r.logger.Error(err, "failed to list Nodes")
+		}
+
+		for _, node := range cordonedNodes {
+			err := RunCordonOrUncordon(r.client, &node, true)
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", node.ObjectMeta.Name))
+				continue
+			}
+		}
+
+		keepPods := groupStrategies[group].KeepPods
+		for _, deletedPod := range r.GroupsPods(suplusGroups)[:keepPods] {
+			hash := deletedPod.ObjectMeta.GetLabels()["pod-template-hash"]
+			err := DeletePod(r.client, deletedPod)
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to delete Pod{Name: %s}", deletedPod.ObjectMeta.Name))
+				continue
+			}
+
+			newPods, err := monitorNewPodUntilReady(namespace, labels, deploymentUID, hash, groupPods.UnGroupPods())
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to monitor new pod"))
+				continue
+			}
+
+			for _, pod := range newPods {
+				addPodToGroupPods(pod, groupPods)
+			}
+			groupPods.DeletePod(group, deletedPod)
+		}
+
+		for _, node := range cordonedNodes {
+			err := RunCordonOrUncordon(r.client, &node, false)
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", node.ObjectMeta.Name))
 				continue
 			}
 		}
@@ -222,7 +272,7 @@ Monitor:
 			for _, pod := range newPods {
 				phase := pod.PodStatus.PodPhase
 				nodeName := pod.Spec.NodeName
-				if nodeName == nil {
+				if nodeName == nil || phase == "Unknow" {
 					continue Monitor
 				} else if phase == "Failed" {
 					return nil, errors.New("failed to launch pod")
