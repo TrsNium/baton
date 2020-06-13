@@ -132,8 +132,8 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 	groupStrategies map[string]batonv1.Strategy,
 	groupPods *GroupPods,
 ) error {
-	for _, group := range groupPods.SuplusGroups(groupStragroupsNodestegies, false) {
-		cordonedNodes, err := GroupNodes(r.client, group)
+	for _, suplusGroup := range groupPods.SuplusGroups(groupStragroupsNodestegies, false) {
+		cordonedNodes, err := GroupNodes(r.client, suplusGroup)
 		if err != nil {
 			r.logger.Error(err, "failed to list Nodes")
 		}
@@ -146,8 +146,8 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 			}
 		}
 
-		keepPods := groupStrategies[group].KeepPods
-		for _, deletedPod := range r.groupPods[group][keepPods:] {
+		keepPods := groupStrategies[suplusGroup].KeepPods
+		for _, deletedPod := range r.groupPods[suplusGroup][keepPods:] {
 			hash := deletedPod.ObjectMeta.GetLabels()["pod-template-hash"]
 			err := DeletePod(r.client, deletedPod)
 			if err != nil {
@@ -164,7 +164,7 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 			for _, pod := range newPods {
 				addPodToGroupPods(pod, groupPods)
 			}
-			groupPods.DeletePod(group, deletedPod)
+			groupPods.DeletePod(suplusGroup, deletedPod)
 		}
 
 		for _, node := range cordonedNodes {
@@ -184,7 +184,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 	groupStrategies map[string]batonv1.Strategy,
 	groupPods *GroupPods,
 ) error {
-	for _, group := range groupPods.LessGroups(groupStrategies, false) {
+	for _, lessGroup := range groupPods.LessGroups(groupStrategies, false) {
 		suplusGroups := r.SuplusGroups(groupStrategies, true)
 		cordonedNodes, err := r.GroupsNodes(r.client, suplusGroups)
 		if err != nil {
@@ -199,7 +199,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 			}
 		}
 
-		keepPods := groupStrategies[group].KeepPods
+		keepPods := groupStrategies[lessGroup].KeepPods
 		for _, deletedPod := range r.GroupsPods(suplusGroups)[:keepPods] {
 			hash := deletedPod.ObjectMeta.GetLabels()["pod-template-hash"]
 			err := DeletePod(r.client, deletedPod)
@@ -217,7 +217,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 			for _, pod := range newPods {
 				addPodToGroupPods(pod, groupPods)
 			}
-			groupPods.DeletePod(group, deletedPod)
+			groupPods.DeletePod(lessGroup, deletedPod)
 		}
 
 		for _, node := range cordonedNodes {
