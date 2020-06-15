@@ -150,7 +150,7 @@ func (r *BatonStrategiesyRunner) validateStrategies(deployment appsv1.Deployment
 		total_keep_pods += strategy.KeepPods
 	}
 
-	if replicas > total_keep_pods {
+	if total_keep_pods > replicas {
 		return errors.New("failed to validate strategy arguments")
 	}
 	return nil
