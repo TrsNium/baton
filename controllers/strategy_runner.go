@@ -29,6 +29,7 @@ func NewBatonStrategiesyRunner(client client.Client, baton batonv1.Baton, logger
 }
 
 func (r *BatonStrategiesyRunner) Run() {
+	r.logger.Info("Run runner")
 	r.stopFlag = make(chan bool)
 	go func() {
 		for {
@@ -46,6 +47,7 @@ func (r *BatonStrategiesyRunner) Run() {
 
 func (r *BatonStrategiesyRunner) Stop() {
 	r.stopFlag <- true
+	r.logger.Info("Stop runner")
 }
 
 func (r *BatonStrategiesyRunner) IsUpdatedBatonStrategies(baton batonv1.Baton) bool {
