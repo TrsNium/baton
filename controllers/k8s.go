@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -11,17 +12,17 @@ func GetDeployment(c client.Client, namespace string, name string) (appsv1.Deplo
 	deployment := appsv1.Deployment{}
 	err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &deployment)
 	if err != nil {
-		return nil, err
+		return appsv1.Deployment{}, err
 	}
-	return deployment, err
+	return deployment, nil
 }
 
 func ListPodMatchLabels(c client.Client, namespace string, labels map[string]string) ([]corev1.Pod, error) {
 	ctx := context.Background()
 	podList := corev1.PodList{}
 	err := c.List(ctx, &podList,
-		client.InNamespace(deployment.ObjectMeta.Namespace),
-		client.MatchingLabels(deployment.Spec.Template.ObjectMeta.Labels),
+		client.InNamespace(namespace),
+		client.MatchingLabels(labels),
 	)
 
 	if err != nil {
@@ -32,17 +33,16 @@ func ListPodMatchLabels(c client.Client, namespace string, labels map[string]str
 
 func DeletePod(c client.Client, pod corev1.Pod) error {
 	ctx := context.Background()
-	err := c.Delete(ctx, pod)
+	err := c.Delete(ctx, &pod)
 	return err
 }
 
 func GetPod(c client.Client, namespace string, name string) (corev1.Pod, error) {
 	ctx := context.Background()
-	ctx := context.Background()
 	pod := corev1.Pod{}
-	c.Get(ctx, client.ObjectKey{Namespace: deploymentInfo.Namespace, Name: deploymentInfo.Name}, &pod)
+	err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &pod)
 	if err != nil {
-		return nil, err
+		return corev1.Pod{}, err
 	}
 	return pod, nil
 }
@@ -67,10 +67,11 @@ func RunCordonOrUncordon(c client.Client, node *corev1.Node, desired bool) error
 		return nil
 	}
 
-	err, patchErr := h.PatchOrReplace(c, false)
+	err, patchErr := h.PatchOrReplace(c)
 	if patchErr != nil {
 		return patchErr
 	}
+
 	if err != nil {
 		return err
 	}

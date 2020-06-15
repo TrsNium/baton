@@ -42,8 +42,8 @@ type Strategy struct {
 
 // BatonStatus defines the observed state of Baton
 type BatonStatus struct {
-	LastRunStartedAt    time.time `json:"last_run_started_at"`
-	LastSuccessfulRunAt time.time `json:"last_successful_run_at"`
+	LastRunStartedAt    time.Time `json:"last_run_started_at"`
+	LastSuccessfulRunAt time.Time `json:"last_successful_run_at"`
 }
 
 // +kubebuilder:object:root=true

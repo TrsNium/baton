@@ -37,7 +37,6 @@ type BatonReconciler struct {
 
 // +kubebuilder:rbac:groups=baton.baton,resources=batons,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=baton.baton,resources=batons/status,verbs=get;update;patch
-
 func (r *BatonReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 

@@ -65,11 +65,12 @@ func main() {
 	}
 
 	client := mgr.GetClient()
+	logger := ctrl.Log.WithName("controllers").WithName("Baton")
 	if err = (&controllers.BatonReconciler{
 		Client:                       client,
-		Log:                          ctrl.Log.WithName("controllers").WithName("Baton"),
+		Log:                          logger,
 		Scheme:                       mgr.GetScheme(),
-		BatonStrategiesRunnerManager: NewBatonStrategiesyRunnerManager(client),
+		BatonStrategiesRunnerManager: controllers.NewBatonStrategiesyRunnerManager(client, logger),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Baton")
 		os.Exit(1)

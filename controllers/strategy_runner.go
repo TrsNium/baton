@@ -6,10 +6,7 @@ import (
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/strategicpatch"
-	"reflect"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"strings"
 	"time"
@@ -18,28 +15,30 @@ import (
 
 type BatonStrategiesyRunner struct {
 	client   client.Client
-	baton    batonv1.Baton
-	stopFlag bool
+	baton    *batonv1.Baton
+	stopFlag chan bool
 	logger   logr.Logger
 }
 
-func NewBatonStrategiesyRunner(client client.Client, baton batonv1.Baton, logger logr.Logger) BatonStrategiesyRunner {
+func NewBatonStrategiesyRunner(client client.Client, baton batonv1.Baton, logger logr.Logger, runnerName string) BatonStrategiesyRunner {
 	return BatonStrategiesyRunner{
 		client: client,
-		baton:  baton,
-		logger: logger,
+		baton:  &baton,
+		logger: logger.WithName("BatonStrategiesRunnerManager").WithName(runnerName),
 	}
 }
 
-func (r *BatonStrategiesyRunner) Run() error {
+func (r *BatonStrategiesyRunner) Run() {
 	r.stopFlag = make(chan bool)
 	go func() {
 		for {
-			r.runStrategies()
+			err := r.runStrategies()
+			if err != nil {
+				r.logger.Error(err, "failed to run strategy")
+			}
 			select {
-			case <-time.After(r.baton.Spec.IntervalSec * time.Second):
+			case <-time.After(time.Duration(r.baton.Spec.IntervalSec) * time.Second):
 			case <-r.stopFlag:
-				return nil
 			}
 		}
 	}()
@@ -54,32 +53,34 @@ func (r *BatonStrategiesyRunner) IsUpdatedBatonStrategies(baton batonv1.Baton) b
 }
 
 func (r *BatonStrategiesyRunner) runStrategies() error {
-	ctx := context.Background()
-
 	deploymentInfo := r.baton.Spec.Deployment
-	deployment, err := GetDeployment(r.client, deploymentInfo.Namespace, deploymentInfo.Name)
+	namespace := deploymentInfo.NameSpace
+	deploymentName := deploymentInfo.Name
+	deployment, err := GetDeployment(r.client, namespace, deploymentName)
 	if err != nil {
-		r.logger.Error(err, fmt.Sprintf("failed to get Deployment{Namespace: %s, Name: %s}", deploymentInfo.Namespace, deploymentInfo.Name))
+		r.logger.Error(err, fmt.Sprintf("failed to get Deployment{Namespace: %s, Name: %s}", namespace, deploymentName))
 		return err
 	}
+	podLabels := deployment.Spec.Template.ObjectMeta.Labels
 
-	err := r.validateStrategies(deployment)
+	err = r.validateStrategies(deployment)
 	if err != nil {
 		r.logger.Error(err, "Deployment replicas must be greater than the total of Keep Pods for strategy")
 		return err
 	}
 
-	pods, err := ListPodMatchLabels(r.client, deploymentInfo.Namespace, Deployment.Spec.Template.ObjectMeta.Labels)
+	var pods []corev1.Pod
+	pods, err = ListPodMatchLabels(r.client, deploymentName, podLabels)
 	if err != nil {
 		r.logger.Error(err,
 			fmt.Sprintf("failed to list Pod{Namespace: %s, MatchingLabels: %v}",
-				deployment.ObjectMeta.Namespace, deployment.Spec.Template.ObjectMeta.Labels),
+				namespace, podLabels),
 		)
 	}
 
 	// Limit to only pods associated with deployment uid
 	deploymentUID := deployment.ObjectMeta.UID
-	pods := FilterPods(pods, func(p corev1.Pod) bool {
+	pods = FilterPods(pods, func(p corev1.Pod) bool {
 		for _, or := range p.ObjectMeta.GetOwnerReferences() {
 			if or.UID == deploymentUID {
 				return true
@@ -91,7 +92,7 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 	groupStrategies := make(map[string]batonv1.Strategy)
 	groupPods := make(GroupPods)
 	for _, strategy := range r.baton.Spec.Strategies {
-		groudStrategies[strategy.NodeGroup] = strategy
+		groupStrategies[strategy.NodeGroup] = strategy
 		groupPods.NewGroup(strategy.NodeGroup)
 	}
 
@@ -101,20 +102,21 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 	}
 
 	// Migrate surplus and shortage pods from other nodes according to strategy
-	err := r.migrateSuplusPods(namespace, labels, deploymentUID, groupStrategies, *groupPods)
+	err = r.migrateSuplusPodToOther(namespace, podLabels, deploymentUID, groupStrategies, &groupPods)
 	if err != nil {
 		r.logger.Error(err, "failed to migrate suplus Pod to other Node")
 	}
 
-	err := r.migrateLessPodFromOther(namespace, labels, deploymentUID, groupStrategies, *groupPods)
+	err = r.migrateLessPodFromOther(namespace, podLabels, deploymentUID, groupStrategies, &groupPods)
 	if err != nil {
 		r.logger.Error(err, "failed to migrate less Pod from other Node")
 	}
+	return nil
 }
 
-func (r *BatonStrategiesyRunner) validateStrategies(deployment appv1.Deployment) error {
-	replicas := deployment.Spec.Replicas
-	total_keep_pods = 0
+func (r *BatonStrategiesyRunner) validateStrategies(deployment appsv1.Deployment) error {
+	replicas := *deployment.Spec.Replicas
+	total_keep_pods := int32(0)
 	for _, strategy := range r.baton.Spec.Strategies {
 		total_keep_pods += strategy.KeepPods
 	}
@@ -132,8 +134,8 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 	groupStrategies map[string]batonv1.Strategy,
 	groupPods *GroupPods,
 ) error {
-	for _, suplusGroup := range groupPods.SuplusGroups(groupStragroupsNodestegies, false) {
-		cordonedNodes, err := GroupNodes(r.client, suplusGroup)
+	for _, suplusGroup := range groupPods.SuplusGroups(groupStrategies, false) {
+		cordonedNodes, err := groupPods.GroupNodes(r.client, suplusGroup, groupStrategies)
 		if err != nil {
 			r.logger.Error(err, "failed to list Nodes")
 		}
@@ -147,7 +149,7 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 		}
 
 		keepPods := groupStrategies[suplusGroup].KeepPods
-		for _, deletedPod := range r.groupPods[suplusGroup][keepPods:] {
+		for _, deletedPod := range (*groupPods)[suplusGroup][keepPods:] {
 			hash := deletedPod.ObjectMeta.GetLabels()["pod-template-hash"]
 			err := DeletePod(r.client, deletedPod)
 			if err != nil {
@@ -155,7 +157,7 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 				continue
 			}
 
-			newPods, err := monitorNewPodUntilReady(namespace, labels, deploymentUID, hash, groupPods.UnGroupPods())
+			newPods, err := r.monitorNewPodsUntilReady(namespace, labels, deploymentUID, hash, groupPods.UnGroupPods())
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to monitor new pod"))
 				continue
@@ -175,6 +177,7 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 			}
 		}
 	}
+	return nil
 }
 
 func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
@@ -185,8 +188,8 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 	groupPods *GroupPods,
 ) error {
 	for _, lessGroup := range groupPods.LessGroups(groupStrategies, false) {
-		suplusGroups := r.SuplusGroups(groupStrategies, true)
-		cordonedNodes, err := r.GroupsNodes(r.client, suplusGroups)
+		suplusGroups := groupPods.SuplusGroups(groupStrategies, true)
+		cordonedNodes, err := groupPods.GroupsNodes(r.client, suplusGroups, groupStrategies)
 		if err != nil {
 			r.logger.Error(err, "failed to list Nodes")
 		}
@@ -200,7 +203,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 		}
 
 		keepPods := groupStrategies[lessGroup].KeepPods
-		for _, deletedPod := range r.GroupsPods(suplusGroups)[:keepPods] {
+		for _, deletedPod := range groupPods.GroupsPods(suplusGroups)[:keepPods] {
 			hash := deletedPod.ObjectMeta.GetLabels()["pod-template-hash"]
 			err := DeletePod(r.client, deletedPod)
 			if err != nil {
@@ -208,7 +211,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 				continue
 			}
 
-			newPods, err := monitorNewPodUntilReady(namespace, labels, deploymentUID, hash, groupPods.UnGroupPods())
+			newPods, err := r.monitorNewPodsUntilReady(namespace, labels, deploymentUID, hash, groupPods.UnGroupPods())
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to monitor new pod"))
 				continue
@@ -228,6 +231,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 			}
 		}
 	}
+	return nil
 }
 
 func (r *BatonStrategiesyRunner) monitorNewPodsUntilReady(
@@ -236,7 +240,7 @@ func (r *BatonStrategiesyRunner) monitorNewPodsUntilReady(
 	deploymentUID types.UID,
 	podTemplateHash string,
 	observedPods []corev1.Pod,
-) {
+) ([]corev1.Pod, error) {
 	// TODO allow timeout to be defined in crd
 	timeout := time.After(5 * time.Second)
 	tick := time.Tick(1 * time.Second)
@@ -246,7 +250,7 @@ Monitor:
 		case <-timeout:
 			return nil, errors.New("time out to monitor new pod")
 		case <-tick:
-			currentPods := ListPodMatchLabels(r.client, namespace, labels)
+			currentPods, err := ListPodMatchLabels(r.client, namespace, labels)
 			if err != nil {
 				r.logger.Error(err,
 					fmt.Sprintf("failed to list Pod{Namespace: %s, MatchingLabels: %v}",
@@ -257,22 +261,22 @@ Monitor:
 
 			filterdCurrentPods := FilterPods(currentPods, func(p corev1.Pod) bool {
 				for _, or := range p.ObjectMeta.GetOwnerReferences() {
-					if or.UID == deploymentUID && podTemplateHash == pod.ObjectMeta.GetLabels()["pod-template-hash"] {
+					if or.UID == deploymentUID && podTemplateHash == p.ObjectMeta.GetLabels()["pod-template-hash"] {
 						return true
 					}
 				}
 				return false
 			})
 
-			newPods, err := getNewPods(observedPods, filterdCurrentPods)
+			newPods := getNewPods(observedPods, filterdCurrentPods)
 			if len(newPods) == 0 {
 				continue Monitor
 			}
 
 			for _, pod := range newPods {
-				phase := pod.PodStatus.PodPhase
+				phase := pod.Status.Phase
 				nodeName := pod.Spec.NodeName
-				if nodeName == nil || phase == "Unknow" {
+				if nodeName == "" || phase == "Unknow" {
 					continue Monitor
 				} else if phase == "Failed" {
 					return nil, errors.New("failed to launch pod")
@@ -286,18 +290,18 @@ Monitor:
 
 func getNewPods(observedPods []corev1.Pod, currentPods []corev1.Pod) []corev1.Pod {
 	includePods := func(pod corev1.Pod, pods []corev1.Pod) bool {
-		for p := range pods {
-			if p.ObjectMeta.Name == pod.ObjectMeta.Name {
+		for _, p := range pods {
+			if p.Name == pod.Name {
 				return true
 			}
 		}
 		return false
 	}
 
-	notExistPods = []corev1.Pod{}
+	notExistPods := []corev1.Pod{}
 	for _, cp := range currentPods {
 		if !includePods(cp, observedPods) {
-			notExistPods := append(notExistPods, cp)
+			notExistPods = append(notExistPods, cp)
 		}
 	}
 	return notExistPods
@@ -305,20 +309,16 @@ func getNewPods(observedPods []corev1.Pod, currentPods []corev1.Pod) []corev1.Po
 
 func addPodToGroupPods(pod corev1.Pod, groupPods *GroupPods) {
 	getSubStrContainsInSubStrs := func(s string, subStrs []string) (bool, string) {
-		if s == nil {
-			return false, nil
-		}
-
 		for _, subStr := range subStrs {
 			if strings.Contains(s, subStr) {
 				return true, subStr
 			}
 		}
-		return false, nil
+		return false, ""
 	}
 
 	scheduledNodeName := pod.Spec.NodeName
-	isContain, nodeGroup := getSubStrContainsInSubStrs(scheduledNodeName, groupPods.GetGroup())
+	isContain, nodeGroup := getSubStrContainsInSubStrs(scheduledNodeName, groupPods.Group())
 	if isContain {
 		groupPods.AddPod(nodeGroup, pod)
 	} else {

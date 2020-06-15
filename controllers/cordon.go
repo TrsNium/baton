@@ -3,9 +3,14 @@
 package controllers
 
 import (
+	"context"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
 )
 
 // CordonHelper wraps functionality to cordon/uncordon nodes
@@ -22,42 +27,39 @@ func NewCordonHelper(node *corev1.Node) *CordonHelper {
 
 // UpdateIfRequired returns true if c.node.Spec.Unschedulable isn't already set,
 // or false when no change is needed
-func (c *CordonHelper) UpdateIfRequired(desired bool) bool {
-	c.desired = desired
+func (r *CordonHelper) UpdateIfRequired(desired bool) bool {
+	r.desired = desired
 
-	return c.node.Spec.Unschedulable != c.desired
+	return r.node.Spec.Unschedulable != r.desired
 }
 
 // PatchOrReplace uses given clientset to update the node status, either by patching or
 // updating the given node object; it may return error if the object cannot be encoded as
 // JSON, or if either patch or update calls fail; it will also return a second error
 // whenever creating a patch has failed
-func (c *CordonHelper) PatchOrReplace(client client.Client, serverDryRun bool) (error, error) {
-	oldData, err := json.Marshal(c.node)
+func (r *CordonHelper) PatchOrReplace(c client.Client) (error, error) {
+	oldData, err := json.Marshal(r.node)
 	if err != nil {
 		return err, nil
 	}
 
-	c.node.Spec.Unschedulable = c.desired
+	r.node.Spec.Unschedulable = r.desired
 
-	newData, err := json.Marshal(c.node)
+	newData, err := json.Marshal(r.node)
 	if err != nil {
 		return err, nil
 	}
 
-	patchBytes, patchErr := strategicpatch.CreateTwoWayMergePatch(oldData, newData, c.node)
-	if patchErr == nil {
-		patchOptions := metav1.PatchOptions{}
-		if serverDryRun {
-			patchOptions.DryRun = []string{metav1.DryRunAll}
-		}
-		_, err = client.Patch(context.TODO(), c.node.Name, types.StrategicMergePatchType, patchBytes, patchOptions)
+	patchBytes, patchErr := strategicpatch.CreateTwoWayMergePatch(oldData, newData, r.node)
+	if patchErr != nil {
+		err = c.Patch(context.TODO(), &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: r.node.Namespace,
+				Name:      r.node.Name,
+			},
+		}, client.RawPatch(types.StrategicMergePatchType, patchBytes))
 	} else {
-		updateOptions := metav1.UpdateOptions{}
-		if serverDryRun {
-			updateOptions.DryRun = []string{metav1.DryRunAll}
-		}
-		_, err = client.Update(context.TODO(), c.node, updateOptions)
+		err = c.Update(context.TODO(), r.node)
 	}
 	return err, patchErr
 }

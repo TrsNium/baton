@@ -11,45 +11,47 @@ import (
 type BatonStrategiesRunnerManager struct {
 	client                   client.Client
 	batonStrategiesRunnerMap map[string]BatonStrategiesyRunner
+	logger                   logr.Logger
 }
 
-func NewBatonStrategiesyRunnerManager(client client.Client) *BatonStrategiesRunnerManager {
+func NewBatonStrategiesyRunnerManager(client client.Client, logger logr.Logger) *BatonStrategiesRunnerManager {
 	return &BatonStrategiesRunnerManager{
 		client:                   client,
 		batonStrategiesRunnerMap: make(map[string]BatonStrategiesyRunner),
+		logger:                   logger.WithName("BatonStrategiesRunnerManager"),
 	}
 }
 
-func (r *BatonManager) IsManaged(baton batonv1.Baton) bool {
+func (r *BatonStrategiesRunnerManager) IsManaged(baton batonv1.Baton) bool {
 	metadata := baton.ObjectMeta
 	key := fmt.Sprintf("%s-%s", metadata.Namespace, metadata.Name)
 	_, isManaged := r.batonStrategiesRunnerMap[key]
 	return isManaged
 }
 
-func (r *BatonManager) IsUpdated(baton batonv1.Baton) bool {
+func (r *BatonStrategiesRunnerManager) IsUpdated(baton batonv1.Baton) bool {
 	metadata := baton.ObjectMeta
 	key := fmt.Sprintf("%s-%s", metadata.Namespace, metadata.Name)
-	batonRunner, _ := r.batonStrategiesRunnerMap[key]
-	return batonRuleRunner.IsUpdated(baton)
+	batonStrategiesRunner := r.batonStrategiesRunnerMap[key]
+	return batonStrategiesRunner.IsUpdatedBatonStrategies(baton)
 }
 
-func (r *BatonManager) Add(baton batonv1.Baton) {
+func (r *BatonStrategiesRunnerManager) Add(baton batonv1.Baton) {
 	metadata := baton.ObjectMeta
 	key := fmt.Sprintf("%s-%s", metadata.Namespace, metadata.Name)
-	batonStrategiesRunner := NewBatonStrategiesyRunner(baton)
+	batonStrategiesRunner := NewBatonStrategiesyRunner(r.client, baton, r.logger, key)
 	batonStrategiesRunner.Run()
 	r.batonStrategiesRunnerMap[key] = batonStrategiesRunner
 }
 
-func (r *BatonManager) Delete(baton batonv1.Baton) {
+func (r *BatonStrategiesRunnerManager) Delete(baton batonv1.Baton) {
 	metadata := baton.ObjectMeta
 	key := fmt.Sprintf("%s-%s", metadata.Namespace, metadata.Name)
 	batonRunner, _ := r.batonStrategiesRunnerMap[key]
 	batonRunner.Stop()
 }
 
-func (r *BatonManager) DeleteNotExists(batons batonv1.BatonList) {
+func (r *BatonStrategiesRunnerManager) DeleteNotExists(batons *batonv1.BatonList) {
 	expectedKeys := []string{}
 	batonMap := make(map[string]batonv1.Baton)
 	for _, baton := range batons.Items {
@@ -59,7 +61,7 @@ func (r *BatonManager) DeleteNotExists(batons batonv1.BatonList) {
 		batonMap[key] = baton
 	}
 
-	batonStrategiesRunneKeys = r.getBatonStrategiesRunnerKeys()
+	batonStrategiesRunneKeys := r.getBatonStrategiesRunnerKeys()
 	for _, batonStrategiesRunneKey := range batonStrategiesRunneKeys {
 		if !contains(expectedKeys, batonStrategiesRunneKey) {
 			r.Delete(batonMap[batonStrategiesRunneKey])
@@ -67,7 +69,7 @@ func (r *BatonManager) DeleteNotExists(batons batonv1.BatonList) {
 	}
 }
 
-func (r *BatonManager) getBatonStrategiesRunnerKeys() []string {
+func (r *BatonStrategiesRunnerManager) getBatonStrategiesRunnerKeys() []string {
 	ks := []string{}
 	for k, _ := range r.batonStrategiesRunnerMap {
 		ks = append(ks, k)
