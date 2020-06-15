@@ -51,7 +51,34 @@ func (r *BatonStrategiesyRunner) Stop() {
 }
 
 func (r *BatonStrategiesyRunner) IsUpdatedBatonStrategies(baton batonv1.Baton) bool {
-	return true
+	isUpdatedDeploymentInfo := r.baton.Spec.Deployment == baton.Spec.Deployment
+	isUpdatedStrategies := true
+	gs := make(map[string]batonv1.Strategy)
+	for _, s := range r.baton.Spec.Strategies {
+		gs[s.NodeGroup] = s
+	}
+
+	sgs := make(map[string]batonv1.Strategy)
+	for _, s := range baton.Spec.Strategies {
+		sgs[s.NodeGroup] = s
+	}
+
+	for k, v := range gs {
+		if v != sgs[k] {
+			isUpdatedStrategies = false
+			break
+		}
+	}
+
+	for k, v := range sgs {
+		if v != gs[k] {
+			isUpdatedStrategies = false
+			break
+		}
+	}
+	return isUpdatedDeploymentInfo ||
+		isUpdatedStrategies ||
+		r.baton.Spec.IntervalSec != baton.Spec.IntervalSec
 }
 
 func (r *BatonStrategiesyRunner) runStrategies() error {
