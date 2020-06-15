@@ -17,7 +17,6 @@ package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"time"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -42,8 +41,8 @@ type Strategy struct {
 
 // BatonStatus defines the observed state of Baton
 type BatonStatus struct {
-	LastRunStartedAt    time.Time `json:"last_run_started_at"`
-	LastSuccessfulRunAt time.Time `json:"last_successful_run_at"`
+	LastRunStartedAt    string `json:"last_run_started_at"`
+	LastSuccessfulRunAt string `json:"last_successful_run_at"`
 }
 
 // +kubebuilder:object:root=true

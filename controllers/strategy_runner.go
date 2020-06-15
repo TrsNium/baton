@@ -314,7 +314,6 @@ Monitor:
 			return newPods, nil
 		}
 	}
-	return nil, errors.New("could not found new pods")
 }
 
 func getNewPods(observedPods []corev1.Pod, currentPods []corev1.Pod) []corev1.Pod {
