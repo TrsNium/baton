@@ -1,0 +1,26 @@
+# permissions to do edit batons.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: baton-editor-role
+rules:
+- apiGroups:
+  - baton.baton
+  resources:
+  - batons
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - baton.baton
+  resources:
+  - batons/status
+  verbs:
+  - get
+  - patch
+  - update

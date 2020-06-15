@@ -1,0 +1,7 @@
+apiVersion: baton.baton/v1
+kind: Baton
+metadata:
+  name: baton-sample
+spec:
+  # Add fields here
+  foo: bar
