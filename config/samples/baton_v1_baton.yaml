@@ -1,7 +1,16 @@
 apiVersion: baton.baton/v1
 kind: Baton
 metadata:
-  name: baton-sample
+  name: baton
 spec:
-  # Add fields here
-  foo: bar
+  deployment:
+    name: nginx
+    namespace: default
+  strategies:
+  - nodeMatchLabels:
+      cloud.google.com/gke-nodepool: preemptible-pool
+  - nodeMatchLabels:
+      cloud.google.com/gke-nodepool: stable-pool
+    keepPods: 1
+  intervalSec: 60
+  monitorTimeoutSec: 60
