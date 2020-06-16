@@ -42,13 +42,16 @@ func (r *BatonStrategiesRunnerManager) Add(baton batonv1.Baton) {
 	batonStrategiesRunner := NewBatonStrategiesyRunner(r.client, baton, r.logger, key)
 	batonStrategiesRunner.Run()
 	r.batonStrategiesRunnerMap[key] = batonStrategiesRunner
+	r.logger.Info(fmt.Sprintf("%s is Started", key))
 }
 
 func (r *BatonStrategiesRunnerManager) Delete(baton batonv1.Baton) {
 	metadata := baton.ObjectMeta
 	key := fmt.Sprintf("%s-%s", metadata.Namespace, metadata.Name)
-	batonRunner, _ := r.batonStrategiesRunnerMap[key]
+	batonRunner := r.batonStrategiesRunnerMap[key]
 	batonRunner.Stop()
+	delete(r.batonStrategiesRunnerMap, key)
+	r.logger.Info(fmt.Sprintf("%s is Stoped", key))
 }
 
 func (r *BatonStrategiesRunnerManager) DeleteNotExists(batons *batonv1.BatonList) {

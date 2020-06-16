@@ -26,18 +26,13 @@ import (
 type BatonSpec struct {
 	Deployment        `json:"deployment"`
 	Strategies        []Strategy `json:"strategies"`
-	IntervalSec       int32      `json:"interval_sec"`
-	MonitorTimeoutSec int32      `json:"monitor_timeout_sec"`
+	IntervalSec       int32      `json:"intervalSec"`
+	MonitorTimeoutSec int32      `json:"monitorTimeoutSec"`
 }
 
 type Deployment struct {
 	Name      string `json:"name"`
 	NameSpace string `json:"namespace"`
-}
-
-type Strategy struct {
-	NodeGroup string `json:"node_group"`
-	KeepPods  int32  `json:"keep_pods"`
 }
 
 // BatonStatus defines the observed state of Baton

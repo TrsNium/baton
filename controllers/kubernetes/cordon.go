@@ -1,6 +1,6 @@
 // hommage from https://github.com/kubernetes/kubectl/blob/master/pkg/drain/cordon.go
 
-package controllers
+package kubernetes
 
 import (
 	"context"

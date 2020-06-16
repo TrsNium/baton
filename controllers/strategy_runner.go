@@ -7,9 +7,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"strings"
 	"time"
 	batonv1 "trsnium.com/baton/api/v1"
+	k8s "trsnium.com/baton/controllers/kubernetes"
 )
 
 type BatonStrategiesyRunner struct {
@@ -39,6 +39,7 @@ func (r *BatonStrategiesyRunner) Run() {
 			select {
 			case <-time.After(time.Duration(r.baton.Spec.IntervalSec) * time.Second):
 			case <-r.stopFlag:
+				return
 			}
 		}
 	}()
@@ -52,29 +53,6 @@ func (r *BatonStrategiesyRunner) Stop() {
 func (r *BatonStrategiesyRunner) IsUpdatedBatonStrategies(baton batonv1.Baton) bool {
 	isUpdatedDeploymentInfo := r.baton.Spec.Deployment == baton.Spec.Deployment
 	isUpdatedStrategies := true
-	gs := make(map[string]batonv1.Strategy)
-	for _, s := range r.baton.Spec.Strategies {
-		gs[s.NodeGroup] = s
-	}
-
-	sgs := make(map[string]batonv1.Strategy)
-	for _, s := range baton.Spec.Strategies {
-		sgs[s.NodeGroup] = s
-	}
-
-	for k, v := range gs {
-		if v != sgs[k] {
-			isUpdatedStrategies = false
-			break
-		}
-	}
-
-	for k, v := range sgs {
-		if v != gs[k] {
-			isUpdatedStrategies = false
-			break
-		}
-	}
 	return isUpdatedDeploymentInfo ||
 		isUpdatedStrategies ||
 		r.baton.Spec.IntervalSec != baton.Spec.IntervalSec
@@ -84,117 +62,96 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 	deploymentInfo := r.baton.Spec.Deployment
 	namespace := deploymentInfo.NameSpace
 	deploymentName := deploymentInfo.Name
-	deployment, err := GetDeployment(r.client, namespace, deploymentName)
+	deployment, err := k8s.GetDeployment(r.client, namespace, deploymentName)
 	if err != nil {
 		r.logger.Error(err, fmt.Sprintf("failed to get Deployment{Namespace: %s, Name: %s}", namespace, deploymentName))
 		return err
 	}
-	podLabels := deployment.Spec.Template.ObjectMeta.Labels
 
-	err = r.validateStrategies(deployment)
+	err = batonv1.ValidateStrategies(r.client, deployment, r.baton.Spec.Strategies)
 	if err != nil {
 		r.logger.Error(err, "Deployment replicas must be greater than the total of Keep Pods for strategy")
 		return err
 	}
 
-	var pods []corev1.Pod
-	pods, err = ListPodMatchLabels(r.client, namespace, podLabels)
-	if err != nil {
-		r.logger.Error(err,
-			fmt.Sprintf("failed to list Pod{Namespace: %s, MatchingLabels: %v}",
-				namespace, podLabels),
-		)
-	}
-
-	groupStrategies := make(map[string]batonv1.Strategy)
-	groupPods := make(GroupPods)
-	for _, strategy := range r.baton.Spec.Strategies {
-		groupStrategies[strategy.NodeGroup] = strategy
-		groupPods.NewGroup(strategy.NodeGroup)
-	}
-
-	// NOTE pod which Phase is 'Pending' or scheduled to in other strategy nodeGroup is grouped up to '`other'
-	for _, pod := range pods {
-		addPodToGroupPods(pod, &groupPods)
-	}
-
-	// Migrate surplus and shortage pods from other nodes according to strategy
-	err = r.migrateSuplusPodToOther(namespace, podLabels, groupStrategies, &groupPods)
+	err = r.migrateSuplusPodToOther(r.baton.Spec.Strategies, deployment)
 	if err != nil {
 		r.logger.Error(err, "failed to migrate suplus Pod to other Node")
 	}
 
-	err = r.migrateLessPodFromOther(namespace, podLabels, groupStrategies, &groupPods)
+	err = r.migrateLessPodFromOther(r.baton.Spec.Strategies, deployment)
 	if err != nil {
 		r.logger.Error(err, "failed to migrate less Pod from other Node")
 	}
 	return nil
 }
 
-func (r *BatonStrategiesyRunner) validateStrategies(deployment appsv1.Deployment) error {
-	replicas := *deployment.Spec.Replicas
-	total_keep_pods := int32(0)
-	for _, strategy := range r.baton.Spec.Strategies {
-		total_keep_pods += strategy.KeepPods
-	}
-
-	if total_keep_pods > replicas {
-		return errors.New("failed to validate strategy arguments")
-	}
-	return nil
-}
-
 func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
-	namespace string,
-	labels map[string]string,
-	groupStrategies map[string]batonv1.Strategy,
-	groupPods *GroupPods,
+	strategies []batonv1.Strategy,
+	deployment appsv1.Deployment,
 ) error {
-	for _, suplusGroup := range groupPods.SuplusGroups(groupStrategies, false) {
-		r.logger.Info(fmt.Sprintf("migrate suplus group (%s) to other", suplusGroup))
-		cordonedNodes, err := groupPods.GroupNodes(r.client, suplusGroup, groupStrategies)
+	for _, strategy := range strategies {
+		pods, err := strategy.GetPodsScheduledNodes(r.client, deployment)
+		if err != nil {
+			r.logger.Error(err, "failed to list Pods")
+			continue
+		}
+
+		if !strategy.IsSuplus(pods) {
+			continue
+		}
+
+		r.logger.Info(fmt.Sprintf("migrate suplus group (%v) to other", strategy.NodeMatchLabels))
+		cordonedNodes, err := strategy.GetMatchNodes(r.client)
 		if err != nil {
 			r.logger.Error(err, "failed to list Nodes")
+			continue
 		}
 
 		for i, _ := range cordonedNodes {
-			err := RunCordonOrUncordon(r.client, &cordonedNodes[i], true)
+			err := k8s.RunCordonOrUncordon(r.client, &cordonedNodes[i], true)
 			if err != nil {
-				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", cordonedNodes[i].ObjectMeta.Name))
+				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", cordonedNodes[i].Name))
 				continue
 			}
 		}
 
-		keepPods := groupStrategies[suplusGroup].KeepPods
-		for _, deletedPod := range (*groupPods)[suplusGroup][keepPods:] {
+		for _, deletedPod := range pods[strategy.KeepPods:] {
+			observedPods, err := k8s.ListPodMatchLabels(
+				r.client,
+				deployment.ObjectMeta.Namespace,
+				deployment.Spec.Template.ObjectMeta.Labels,
+			)
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to list Pods{Namespace: %s, MatchLabels: %v}",
+					deployment.ObjectMeta.Namespace,
+					deployment.Spec.Template.ObjectMeta.Labels,
+				))
+			}
+
 			hash := deletedPod.ObjectMeta.GetLabels()["pod-template-hash"]
-			err := DeletePod(r.client, deletedPod)
+			err = k8s.DeletePod(r.client, deletedPod)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to delete Pod{Name: %s}", deletedPod.ObjectMeta.Name))
 				continue
 			}
 
-			newPods, err := r.monitorNewPodsUntilReady(namespace, labels, hash, groupPods.UnGroupPods())
+			err = r.monitorNewPodsUntilReady(deployment, hash, observedPods)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to monitor new pod"))
 				continue
 			}
-
-			for _, pod := range newPods {
-				addPodToGroupPods(pod, groupPods)
-			}
-			groupPods.DeletePod(suplusGroup, deletedPod)
 		}
 
 		for _, cordonedNode := range cordonedNodes {
 			var uncordonedNode corev1.Node
-			uncordonedNode, err = GetNode(r.client, cordonedNode.Name)
+			uncordonedNode, err = k8s.GetNode(r.client, cordonedNode.Name)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to get node {Name: %s}", cordonedNode.Name))
 				continue
 			}
 
-			err = RunCordonOrUncordon(r.client, &uncordonedNode, false)
+			err = k8s.RunCordonOrUncordon(r.client, &uncordonedNode, false)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", &cordonedNode.ObjectMeta.Name))
 				continue
@@ -205,57 +162,85 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 }
 
 func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
-	namespace string,
-	labels map[string]string,
-	groupStrategies map[string]batonv1.Strategy,
-	groupPods *GroupPods,
+	strategies []batonv1.Strategy,
+	deployment appsv1.Deployment,
 ) error {
-	for _, lessGroup := range groupPods.LessGroups(groupStrategies, false) {
-		r.logger.Info(fmt.Sprintf("migrate less group (%s) from other", lessGroup))
-		suplusGroups := groupPods.SuplusGroups(groupStrategies, true)
-		cordonedNodes, err := groupPods.GroupsNodes(r.client, suplusGroups, groupStrategies)
+	for _, strategy := range strategies {
+		pods, err := strategy.GetPodsScheduledNodes(r.client, deployment)
+		if err != nil {
+			r.logger.Error(err, "failed to list Pods")
+			continue
+		}
+
+		if !strategy.IsLess(pods) {
+			continue
+		}
+		r.logger.Info(fmt.Sprintf("migrate less group (%v) from other", strategy.NodeMatchLabels))
+
+		suplusStrategies := batonv1.FilterStrategies(strategies, func(s batonv1.Strategy) bool {
+			if s.KeepPods == 0 {
+				return true
+			}
+			isSuplus, _ := s.IsSuplusWithPodsScheduledNodes(r.client, deployment)
+			return isSuplus
+		})
+
+		deleatablePod, err := batonv1.GetStrategiesPodsScheduledNodes(r.client, deployment, suplusStrategies)
+		if err != nil {
+			r.logger.Error(err, "failed to list Pods")
+			continue
+		}
+
+		cordonedNodes, err := batonv1.GetStrategiesMatchNodes(r.client, suplusStrategies)
 		if err != nil {
 			r.logger.Error(err, "failed to list Nodes")
+			continue
 		}
 
 		for i, _ := range cordonedNodes {
-			err := RunCordonOrUncordon(r.client, &cordonedNodes[i], true)
+			err := k8s.RunCordonOrUncordon(r.client, &cordonedNodes[i], true)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", &cordonedNodes[i].ObjectMeta.Name))
 				continue
 			}
 		}
 
-		keepPods := groupStrategies[lessGroup].KeepPods
-		for _, deletedPod := range groupPods.GroupsPods(suplusGroups)[:keepPods] {
+		for _, deletedPod := range deleatablePod[:strategy.KeepPods] {
+			observedPods, err := k8s.ListPodMatchLabels(
+				r.client,
+				deployment.ObjectMeta.Namespace,
+				deployment.Spec.Template.ObjectMeta.Labels,
+			)
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to list Pods{Namespace: %s, MatchLabels: %v}",
+					deployment.ObjectMeta.Namespace,
+					deployment.Spec.Template.ObjectMeta.Labels,
+				))
+			}
+
 			hash := deletedPod.ObjectMeta.GetLabels()["pod-template-hash"]
-			err := DeletePod(r.client, deletedPod)
+			err = k8s.DeletePod(r.client, deletedPod)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to delete Pod{Name: %s}", deletedPod.ObjectMeta.Name))
 				continue
 			}
 
-			newPods, err := r.monitorNewPodsUntilReady(namespace, labels, hash, groupPods.UnGroupPods())
+			err = r.monitorNewPodsUntilReady(deployment, hash, observedPods)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to monitor new pod"))
 				continue
 			}
-
-			for _, pod := range newPods {
-				addPodToGroupPods(pod, groupPods)
-			}
-			groupPods.DeletePod(lessGroup, deletedPod)
 		}
 
 		for _, cordonedNode := range cordonedNodes {
 			var uncordonedNode corev1.Node
-			uncordonedNode, err = GetNode(r.client, cordonedNode.Name)
+			uncordonedNode, err = k8s.GetNode(r.client, cordonedNode.Name)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to get node {Name: %s}", cordonedNode.Name))
 				continue
 			}
 
-			err = RunCordonOrUncordon(r.client, &uncordonedNode, false)
+			err = k8s.RunCordonOrUncordon(r.client, &uncordonedNode, false)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", &cordonedNode.ObjectMeta.Name))
 				continue
@@ -266,29 +251,30 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 }
 
 func (r *BatonStrategiesyRunner) monitorNewPodsUntilReady(
-	namespace string,
-	labels map[string]string,
+	deployment appsv1.Deployment,
 	podTemplateHash string,
 	observedPods []corev1.Pod,
-) ([]corev1.Pod, error) {
+) error {
+	namespace := deployment.ObjectMeta.Namespace
+	labels := deployment.Spec.Template.ObjectMeta.Labels
 	timeout := time.After(time.Duration(r.baton.Spec.MonitorTimeoutSec) * time.Second)
 	tick := time.Tick(15 * time.Second)
 Monitor:
 	for {
 		select {
 		case <-timeout:
-			return nil, errors.New("time out to monitor new pod")
+			return errors.New("time out to monitor new pod")
 		case <-tick:
-			currentPods, err := ListPodMatchLabels(r.client, namespace, labels)
+			currentPods, err := k8s.ListPodMatchLabels(r.client, namespace, labels)
 			if err != nil {
 				r.logger.Error(err,
-					fmt.Sprintf("failed to list Pod{Namespace: %s, MatchingLabels: %v}",
+					fmt.Sprintf("failed to list Pods{Namespace: %s, MatchLabels: %v}",
 						namespace, labels),
 				)
-				return nil, err
+				return err
 			}
 
-			filterdCurrentPods := FilterPods(currentPods, func(p corev1.Pod) bool {
+			filterdCurrentPods := k8s.FilterPods(currentPods, func(p corev1.Pod) bool {
 				if podTemplateHash == p.ObjectMeta.GetLabels()["pod-template-hash"] {
 					return true
 				}
@@ -306,10 +292,10 @@ Monitor:
 				if nodeName == "" || phase == "Unknow" {
 					continue Monitor
 				} else if phase == "Failed" {
-					return nil, errors.New("failed to launch pod")
+					return errors.New("failed to launch pod")
 				}
 			}
-			return newPods, nil
+			return nil
 		}
 	}
 }
@@ -331,23 +317,4 @@ func getNewPods(observedPods []corev1.Pod, currentPods []corev1.Pod) []corev1.Po
 		}
 	}
 	return notExistPods
-}
-
-func addPodToGroupPods(pod corev1.Pod, groupPods *GroupPods) {
-	getSubStrContainsInSubStrs := func(s string, subStrs []string) (bool, string) {
-		for _, subStr := range subStrs {
-			if strings.Contains(s, subStr) {
-				return true, subStr
-			}
-		}
-		return false, ""
-	}
-
-	scheduledNodeName := pod.Spec.NodeName
-	isContain, nodeGroup := getSubStrContainsInSubStrs(scheduledNodeName, groupPods.Group())
-	if isContain {
-		groupPods.AddPod(nodeGroup, pod)
-	} else {
-		groupPods.AddPod("`other", pod)
-	}
 }
