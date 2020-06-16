@@ -47,6 +47,16 @@ func GetPod(c client.Client, namespace string, name string) (corev1.Pod, error) 
 	return pod, nil
 }
 
+func GetNode(c client.Client, name string) (corev1.Node, error) {
+	ctx := context.Background()
+	node := corev1.Node{}
+	err := c.Get(ctx, client.ObjectKey{Name: name}, &node)
+	if err != nil {
+		return corev1.Node{}, err
+	}
+	return node, nil
+}
+
 func GetNodes(c client.Client) ([]corev1.Node, error) {
 	ctx := context.Background()
 	nodes := corev1.NodeList{}

@@ -45,7 +45,11 @@ func (r GroupPods) Group() []string {
 func (r GroupPods) SuplusGroups(groupStrategies map[string]batonv1.Strategy, isIncludeOtherGroup bool) []string {
 	suplusGroups := []string{}
 	for key, _ := range r {
-		if int32(len(r[key])) > groupStrategies[key].KeepPods || (key == "`other" && isIncludeOtherGroup) {
+		if key == "`other" && !isIncludeOtherGroup {
+			continue
+		} else if key == "`other" && isIncludeOtherGroup {
+			suplusGroups = append(suplusGroups, key)
+		} else if int32(len(r[key])) > groupStrategies[key].KeepPods {
 			suplusGroups = append(suplusGroups, key)
 		}
 	}
@@ -55,7 +59,11 @@ func (r GroupPods) SuplusGroups(groupStrategies map[string]batonv1.Strategy, isI
 func (r GroupPods) LessGroups(groupStrategies map[string]batonv1.Strategy, isIncludeOtherGroup bool) []string {
 	lessGroups := []string{}
 	for key, _ := range r {
-		if int32(len(r[key])) < groupStrategies[key].KeepPods || (key == "`other" && isIncludeOtherGroup) {
+		if key == "`other" && !isIncludeOtherGroup {
+			continue
+		} else if key == "`other" && isIncludeOtherGroup {
+			lessGroups = append(lessGroups, key)
+		} else if int32(len(r[key])) < groupStrategies[key].KeepPods {
 			lessGroups = append(lessGroups, key)
 		}
 	}

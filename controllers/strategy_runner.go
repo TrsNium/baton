@@ -117,7 +117,6 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 	for _, pod := range pods {
 		addPodToGroupPods(pod, &groupPods)
 	}
-	print(fmt.Sprintf("%v", groupPods))
 
 	// Migrate surplus and shortage pods from other nodes according to strategy
 	err = r.migrateSuplusPodToOther(namespace, podLabels, groupStrategies, &groupPods)
@@ -152,6 +151,7 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 	groupPods *GroupPods,
 ) error {
 	for _, suplusGroup := range groupPods.SuplusGroups(groupStrategies, false) {
+		r.logger.Info(fmt.Sprintf("migrate suplus group (%s) to other", suplusGroup))
 		cordonedNodes, err := groupPods.GroupNodes(r.client, suplusGroup, groupStrategies)
 		if err != nil {
 			r.logger.Error(err, "failed to list Nodes")
@@ -186,10 +186,17 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 			groupPods.DeletePod(suplusGroup, deletedPod)
 		}
 
-		for i, _ := range cordonedNodes {
-			err := RunCordonOrUncordon(r.client, &cordonedNodes[i], false)
+		for _, cordonedNode := range cordonedNodes {
+			var uncordonedNode corev1.Node
+			uncordonedNode, err = GetNode(r.client, cordonedNode.Name)
 			if err != nil {
-				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", &cordonedNodes[i].ObjectMeta.Name))
+				r.logger.Error(err, fmt.Sprintf("failed to get node {Name: %s}", cordonedNode.Name))
+				continue
+			}
+
+			err = RunCordonOrUncordon(r.client, &uncordonedNode, false)
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", &cordonedNode.ObjectMeta.Name))
 				continue
 			}
 		}
@@ -204,6 +211,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 	groupPods *GroupPods,
 ) error {
 	for _, lessGroup := range groupPods.LessGroups(groupStrategies, false) {
+		r.logger.Info(fmt.Sprintf("migrate less group (%s) from other", lessGroup))
 		suplusGroups := groupPods.SuplusGroups(groupStrategies, true)
 		cordonedNodes, err := groupPods.GroupsNodes(r.client, suplusGroups, groupStrategies)
 		if err != nil {
@@ -239,10 +247,17 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 			groupPods.DeletePod(lessGroup, deletedPod)
 		}
 
-		for i, _ := range cordonedNodes {
-			err := RunCordonOrUncordon(r.client, &cordonedNodes[i], false)
+		for _, cordonedNode := range cordonedNodes {
+			var uncordonedNode corev1.Node
+			uncordonedNode, err = GetNode(r.client, cordonedNode.Name)
 			if err != nil {
-				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", cordonedNodes[i].ObjectMeta.Name))
+				r.logger.Error(err, fmt.Sprintf("failed to get node {Name: %s}", cordonedNode.Name))
+				continue
+			}
+
+			err = RunCordonOrUncordon(r.client, &uncordonedNode, false)
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", &cordonedNode.ObjectMeta.Name))
 				continue
 			}
 		}
@@ -257,7 +272,7 @@ func (r *BatonStrategiesyRunner) monitorNewPodsUntilReady(
 	observedPods []corev1.Pod,
 ) ([]corev1.Pod, error) {
 	timeout := time.After(time.Duration(r.baton.Spec.MonitorTimeoutSec) * time.Second)
-	tick := time.Tick(1 * time.Second)
+	tick := time.Tick(15 * time.Second)
 Monitor:
 	for {
 		select {
