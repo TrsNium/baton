@@ -24,9 +24,10 @@ import (
 
 // BatonSpec defines the desired state of Baton
 type BatonSpec struct {
-	Deployment  `json:"deployment"`
-	Strategies  []Strategy `json:"strategies"`
-	IntervalSec int32      `json:"interval_sec"`
+	Deployment        `json:"deployment"`
+	Strategies        []Strategy `json:"strategies"`
+	IntervalSec       int32      `json:"interval_sec"`
+	MonitorTimeoutSec int32      `json:"monitor_timeout_sec"`
 }
 
 type Deployment struct {

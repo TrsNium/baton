@@ -6,7 +6,6 @@ import (
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"strings"
 	"time"
@@ -99,24 +98,13 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 	}
 
 	var pods []corev1.Pod
-	pods, err = ListPodMatchLabels(r.client, deploymentName, podLabels)
+	pods, err = ListPodMatchLabels(r.client, namespace, podLabels)
 	if err != nil {
 		r.logger.Error(err,
 			fmt.Sprintf("failed to list Pod{Namespace: %s, MatchingLabels: %v}",
 				namespace, podLabels),
 		)
 	}
-
-	// Limit to only pods associated with deployment uid
-	deploymentUID := deployment.ObjectMeta.UID
-	pods = FilterPods(pods, func(p corev1.Pod) bool {
-		for _, or := range p.ObjectMeta.GetOwnerReferences() {
-			if or.UID == deploymentUID {
-				return true
-			}
-		}
-		return false
-	})
 
 	groupStrategies := make(map[string]batonv1.Strategy)
 	groupPods := make(GroupPods)
@@ -129,14 +117,15 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 	for _, pod := range pods {
 		addPodToGroupPods(pod, &groupPods)
 	}
+	print(fmt.Sprintf("%v", groupPods))
 
 	// Migrate surplus and shortage pods from other nodes according to strategy
-	err = r.migrateSuplusPodToOther(namespace, podLabels, deploymentUID, groupStrategies, &groupPods)
+	err = r.migrateSuplusPodToOther(namespace, podLabels, groupStrategies, &groupPods)
 	if err != nil {
 		r.logger.Error(err, "failed to migrate suplus Pod to other Node")
 	}
 
-	err = r.migrateLessPodFromOther(namespace, podLabels, deploymentUID, groupStrategies, &groupPods)
+	err = r.migrateLessPodFromOther(namespace, podLabels, groupStrategies, &groupPods)
 	if err != nil {
 		r.logger.Error(err, "failed to migrate less Pod from other Node")
 	}
@@ -159,7 +148,6 @@ func (r *BatonStrategiesyRunner) validateStrategies(deployment appsv1.Deployment
 func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 	namespace string,
 	labels map[string]string,
-	deploymentUID types.UID,
 	groupStrategies map[string]batonv1.Strategy,
 	groupPods *GroupPods,
 ) error {
@@ -169,10 +157,10 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 			r.logger.Error(err, "failed to list Nodes")
 		}
 
-		for _, node := range cordonedNodes {
-			err := RunCordonOrUncordon(r.client, &node, true)
+		for i, _ := range cordonedNodes {
+			err := RunCordonOrUncordon(r.client, &cordonedNodes[i], true)
 			if err != nil {
-				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", node.ObjectMeta.Name))
+				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", cordonedNodes[i].ObjectMeta.Name))
 				continue
 			}
 		}
@@ -186,7 +174,7 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 				continue
 			}
 
-			newPods, err := r.monitorNewPodsUntilReady(namespace, labels, deploymentUID, hash, groupPods.UnGroupPods())
+			newPods, err := r.monitorNewPodsUntilReady(namespace, labels, hash, groupPods.UnGroupPods())
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to monitor new pod"))
 				continue
@@ -198,10 +186,10 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 			groupPods.DeletePod(suplusGroup, deletedPod)
 		}
 
-		for _, node := range cordonedNodes {
-			err := RunCordonOrUncordon(r.client, &node, false)
+		for i, _ := range cordonedNodes {
+			err := RunCordonOrUncordon(r.client, &cordonedNodes[i], false)
 			if err != nil {
-				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", node.ObjectMeta.Name))
+				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", &cordonedNodes[i].ObjectMeta.Name))
 				continue
 			}
 		}
@@ -212,7 +200,6 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 	namespace string,
 	labels map[string]string,
-	deploymentUID types.UID,
 	groupStrategies map[string]batonv1.Strategy,
 	groupPods *GroupPods,
 ) error {
@@ -223,10 +210,10 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 			r.logger.Error(err, "failed to list Nodes")
 		}
 
-		for _, node := range cordonedNodes {
-			err := RunCordonOrUncordon(r.client, &node, true)
+		for i, _ := range cordonedNodes {
+			err := RunCordonOrUncordon(r.client, &cordonedNodes[i], true)
 			if err != nil {
-				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", node.ObjectMeta.Name))
+				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", &cordonedNodes[i].ObjectMeta.Name))
 				continue
 			}
 		}
@@ -240,7 +227,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 				continue
 			}
 
-			newPods, err := r.monitorNewPodsUntilReady(namespace, labels, deploymentUID, hash, groupPods.UnGroupPods())
+			newPods, err := r.monitorNewPodsUntilReady(namespace, labels, hash, groupPods.UnGroupPods())
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to monitor new pod"))
 				continue
@@ -252,10 +239,10 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 			groupPods.DeletePod(lessGroup, deletedPod)
 		}
 
-		for _, node := range cordonedNodes {
-			err := RunCordonOrUncordon(r.client, &node, false)
+		for i, _ := range cordonedNodes {
+			err := RunCordonOrUncordon(r.client, &cordonedNodes[i], false)
 			if err != nil {
-				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", node.ObjectMeta.Name))
+				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", cordonedNodes[i].ObjectMeta.Name))
 				continue
 			}
 		}
@@ -266,12 +253,10 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 func (r *BatonStrategiesyRunner) monitorNewPodsUntilReady(
 	namespace string,
 	labels map[string]string,
-	deploymentUID types.UID,
 	podTemplateHash string,
 	observedPods []corev1.Pod,
 ) ([]corev1.Pod, error) {
-	// TODO allow timeout to be defined in crd
-	timeout := time.After(5 * time.Second)
+	timeout := time.After(time.Duration(r.baton.Spec.MonitorTimeoutSec) * time.Second)
 	tick := time.Tick(1 * time.Second)
 Monitor:
 	for {
@@ -289,10 +274,8 @@ Monitor:
 			}
 
 			filterdCurrentPods := FilterPods(currentPods, func(p corev1.Pod) bool {
-				for _, or := range p.ObjectMeta.GetOwnerReferences() {
-					if or.UID == deploymentUID && podTemplateHash == p.ObjectMeta.GetLabels()["pod-template-hash"] {
-						return true
-					}
+				if podTemplateHash == p.ObjectMeta.GetLabels()["pod-template-hash"] {
+					return true
 				}
 				return false
 			})
