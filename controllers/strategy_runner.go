@@ -70,7 +70,7 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 
 	err = batonv1.ValidateStrategies(r.client, deployment, r.baton.Spec.Strategies)
 	if err != nil {
-		r.logger.Error(err, "Deployment replicas must be greater than the total of Keep Pods for strategy")
+		r.logger.Error(err, "failed to validate strategy")
 		return err
 	}
 
