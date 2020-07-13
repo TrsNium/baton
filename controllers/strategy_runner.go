@@ -153,7 +153,7 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 
 			err = k8s.RunCordonOrUncordon(r.client, &uncordonedNode, false)
 			if err != nil {
-				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", &cordonedNode.ObjectMeta.Name))
+				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", cordonedNode.ObjectMeta.Name))
 				continue
 			}
 		}
@@ -200,7 +200,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 		for i, _ := range cordonedNodes {
 			err := k8s.RunCordonOrUncordon(r.client, &cordonedNodes[i], true)
 			if err != nil {
-				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", &cordonedNodes[i].ObjectMeta.Name))
+				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", cordonedNodes[i].ObjectMeta.Name))
 				continue
 			}
 		}
@@ -242,7 +242,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 
 			err = k8s.RunCordonOrUncordon(r.client, &uncordonedNode, false)
 			if err != nil {
-				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", &cordonedNode.ObjectMeta.Name))
+				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", cordonedNode.ObjectMeta.Name))
 				continue
 			}
 		}
