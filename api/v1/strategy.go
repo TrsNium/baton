@@ -185,16 +185,16 @@ func ValidateStrategies(c client.Client, deployment appsv1.Deployment, strategie
 		return err
 	}
 
-	podsScheduledOnStrategiesNode := k8s.FilterPods(pods, func(p corev1.Pod) bool {
+	runningPodsScheduledOnStrategiesNode := k8s.FilterPods(pods, func(p corev1.Pod) bool {
 		for _, node := range nodes {
-			if node.Name == p.Spec.NodeName {
+			if node.Name == p.Spec.NodeName && p.Status.Phase == "Running" {
 				return true
 			}
 		}
 		return false
 	})
 
-	if len(podsScheduledOnStrategiesNode) != len(pods) {
+	if len(runningPodsScheduledOnStrategiesNode) != len(pods) {
 		return errors.New("Deployment pods should always be on nodes of all strategies")
 	}
 
