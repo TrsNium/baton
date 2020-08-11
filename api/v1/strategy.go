@@ -198,13 +198,12 @@ func ValidateStrategies(c client.Client, deployment appsv1.Deployment, strategie
 		return errors.New("Deployment pods should always be on nodes of all strategies")
 	}
 
-	replicas := *deployment.Spec.Replicas
-	total_keep_pods := int32(0)
+	total_keep_pods := 0
 	for _, strategy := range strategies {
-		total_keep_pods += strategy.KeepPods
+		total_keep_pods += int(strategy.KeepPods)
 	}
 
-	if total_keep_pods > replicas {
+	if total_keep_pods > len(runningPodsScheduledOnStrategiesNode) {
 		return errors.New("Deployment replicas must be greater than the total of Keep Pods for strategy")
 	}
 	return nil
