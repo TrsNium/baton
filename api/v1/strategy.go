@@ -17,12 +17,29 @@ package v1
 
 import (
 	"errors"
+	"fmt"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"reflect"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8s "trsnium.com/baton/controllers/kubernetes"
 )
+
+type Err struct {
+	err error
+}
+
+func (e *Err) Error() string {
+	return fmt.Sprint(e.err)
+}
+
+type PodIsNotProvisioningOnStrategiesNodeError struct {
+	*Err
+}
+
+type PodsIsNotSatisfyStrategiesKeepPods struct {
+	*Err
+}
 
 type Strategy struct {
 	NodeMatchLabels map[string]string `json:"nodeMatchLabels"`
@@ -169,6 +186,14 @@ func (r Strategy) Equals(s Strategy) bool {
 	return r.KeepPods != s.KeepPods && isEqualMatchLabels
 }
 
+func GetTotalKeepPods(strategies []Strategy) int {
+	total_keep_pods := 0
+	for _, strategy := range strategies {
+		total_keep_pods += int(strategy.KeepPods)
+	}
+	return total_keep_pods
+}
+
 func ValidateStrategies(c client.Client, deployment appsv1.Deployment, strategies []Strategy) error {
 	pods, err := k8s.ListPodMatchLabels(
 		c,
@@ -195,16 +220,12 @@ func ValidateStrategies(c client.Client, deployment appsv1.Deployment, strategie
 	})
 
 	if len(runningPodsScheduledOnStrategiesNode) != len(pods) {
-		return errors.New("Deployment pods should always be on nodes of all strategies")
+		return PodIsNotProvisioningOnStrategiesNodeError{&Err{errors.New("Deployment pods should always be on nodes of all strategies")}}
 	}
 
-	total_keep_pods := 0
-	for _, strategy := range strategies {
-		total_keep_pods += int(strategy.KeepPods)
-	}
-
+	total_keep_pods := GetTotalKeepPods(strategies)
 	if total_keep_pods > len(runningPodsScheduledOnStrategiesNode) {
-		return errors.New("Deployment replicas must be greater than the total of Keep Pods for strategy")
+		return PodsIsNotSatisfyStrategiesKeepPods{&Err{errors.New("Deployment replicas must be greater than the total of Keep Pods for strategy")}}
 	}
 	return nil
 }
