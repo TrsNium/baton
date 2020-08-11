@@ -70,19 +70,7 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 	}
 
 	err = batonv1.ValidateStrategies(r.client, deployment, r.baton.Spec.Strategies)
-	switch err.(type) {
-	case batonv1.PodIsNotProvisioningOnStrategiesNodeError:
-		r.logger.Error(err, "failed to validate strategy")
-		return err
-	case batonv1.PodsIsNotSatisfyStrategiesKeepPods:
-		r.logger.Error(err, "failed to validate strategy")
-		r.logger.Info("retry from the beginning with more replicas of the pod")
-		total_keep_pods := batonv1.GetTotalKeepPods(r.baton.Spec.Strategies)
-		newReplicas := int32(total_keep_pods + 1)
-		deployment.Spec.Replicas = &newReplicas
-		if err := r.client.Update(context.Background(), &deployment); err != nil {
-			return errors.New("failed to update replica count for Deployment")
-		}
+	if err != nil {
 		return err
 	}
 

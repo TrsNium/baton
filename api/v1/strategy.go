@@ -16,30 +16,14 @@ limitations under the License.
 package v1
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"reflect"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8s "trsnium.com/baton/controllers/kubernetes"
 )
-
-type Err struct {
-	err error
-}
-
-func (e *Err) Error() string {
-	return fmt.Sprint(e.err)
-}
-
-type PodIsNotProvisioningOnStrategiesNodeError struct {
-	*Err
-}
-
-type PodsIsNotSatisfyStrategiesKeepPods struct {
-	*Err
-}
 
 type Strategy struct {
 	NodeMatchLabels map[string]string `json:"nodeMatchLabels"`
@@ -220,12 +204,17 @@ func ValidateStrategies(c client.Client, deployment appsv1.Deployment, strategie
 	})
 
 	if len(runningPodsScheduledOnStrategiesNode) != len(pods) {
-		return PodIsNotProvisioningOnStrategiesNodeError{&Err{errors.New("Deployment pods should always be on nodes of all strategies")}}
+		return errors.New("Deployment pods should always be on nodes of all strategies")
 	}
 
 	total_keep_pods := GetTotalKeepPods(strategies)
 	if total_keep_pods > len(runningPodsScheduledOnStrategiesNode) {
-		return PodsIsNotSatisfyStrategiesKeepPods{&Err{errors.New("Deployment replicas must be greater than the total of Keep Pods for strategy")}}
+		newReplicas := int32(total_keep_pods + 1)
+		deployment.Spec.Replicas = &newReplicas
+		if err := c.Update(context.Background(), &deployment); err != nil {
+			return errors.New("failed to update replica count for Deployment")
+		}
+		return errors.New("Deployment replicas must be greater than the total of Keep Pods for strategy, retry from the beginning with more replicas of the pod")
 	}
 	return nil
 }
