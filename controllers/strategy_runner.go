@@ -1,11 +1,13 @@
 package controllers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"reflect"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"time"
 	batonv1 "trsnium.com/baton/api/v1"
@@ -73,6 +75,12 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 		return err
 	}
 
+	err = r.scaleOutPodIfSatisfyStrategyKeepPods(r.baton.Spec.Strategies, deployment)
+	if err != nil {
+		r.logger.Error(err, "failed to scale out deployment for not satisfied strategy's keep pods")
+		return err
+	}
+
 	err = r.migrateSuplusPodToOther(r.baton.Spec.Strategies, deployment)
 	if err != nil {
 		r.logger.Error(err, "failed to migrate suplus Pod to other Node")
@@ -81,6 +89,105 @@ func (r *BatonStrategiesyRunner) runStrategies() error {
 	err = r.migrateLessPodFromOther(r.baton.Spec.Strategies, deployment)
 	if err != nil {
 		r.logger.Error(err, "failed to migrate less Pod from other Node")
+	}
+	return nil
+}
+
+func (r *BatonStrategiesyRunner) scaleOutPodIfSatisfyStrategyKeepPods(
+	strategies []batonv1.Strategy,
+	deployment appsv1.Deployment,
+) error {
+	for _, strategy := range strategies {
+		if !(strategy.KeepPods > 0) {
+			continue
+		}
+
+		pods, err := k8s.ListPodMatchLabels(
+			r.client,
+			deployment.ObjectMeta.Namespace,
+			deployment.Spec.Template.ObjectMeta.Labels,
+		)
+		if err != nil {
+			return err
+		}
+
+		strategyNodes, err := strategy.GetMatchNodes(r.client)
+		if err != nil {
+			return errors.New("Failed to fetch nodes matching strategy labels")
+		}
+
+		runninPodsScheduledOnStrategyNodes := k8s.FilterPods(pods, func(p corev1.Pod) bool {
+			for _, node := range strategyNodes {
+				if node.Name == p.Spec.NodeName && p.Status.Phase == "Running" {
+					return true
+				}
+			}
+			return false
+		})
+
+		if len(runninPodsScheduledOnStrategyNodes) >= int(strategy.KeepPods) {
+			continue
+		}
+
+		r.logger.Info(fmt.Sprintf("Not satisfy strategy. scale out for (%v)", strategy.NodeMatchLabels))
+		otherStrategies := batonv1.FilterStrategies(strategies, func(s batonv1.Strategy) bool {
+			if !reflect.DeepEqual(strategy, s) {
+				return true
+			}
+			return false
+		})
+
+		cordonedNodes, err := batonv1.GetStrategiesMatchNodes(r.client, otherStrategies)
+		for i, _ := range cordonedNodes {
+			err := k8s.RunCordonOrUncordon(r.client, &cordonedNodes[i], true)
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to cordon Node{Name: %s}", cordonedNodes[i].Name))
+				continue
+			}
+		}
+
+		observedPods, err := k8s.ListPodMatchLabels(
+			r.client,
+			deployment.ObjectMeta.Namespace,
+			deployment.Spec.Template.ObjectMeta.Labels,
+		)
+		if err != nil {
+			r.logger.Error(err, fmt.Sprintf("failed to list Pods{Namespace: %s, MatchLabels: %v}",
+				deployment.ObjectMeta.Namespace,
+				deployment.Spec.Template.ObjectMeta.Labels,
+			))
+		}
+
+		// Update to one larger than the current replicas.
+		newReplicas := *deployment.Spec.Replicas + 1
+		deployment.Spec.Replicas = &newReplicas
+		if err := r.client.Update(context.Background(), &deployment); err != nil {
+			r.logger.Error(err, "failed to Deployment update replica count")
+			return errors.New("failed to Deployment update replica count")
+		}
+
+		err = r.monitorNewPodsUntilReady(deployment, nil, observedPods)
+		if err != nil {
+			r.logger.Error(err, fmt.Sprintf("failed to monitor new pod"))
+			continue
+		}
+
+		for _, cordonedNode := range cordonedNodes {
+			var uncordonedNode corev1.Node
+			uncordonedNode, err = k8s.GetNode(r.client, cordonedNode.Name)
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to get node {Name: %s}", cordonedNode.Name))
+				continue
+			}
+
+			err = k8s.RunCordonOrUncordon(r.client, &uncordonedNode, false)
+			if err != nil {
+				r.logger.Error(err, fmt.Sprintf("failed to uncordon Node{Name: %s}", cordonedNode.ObjectMeta.Name))
+				continue
+			}
+		}
+		// Return an error so that we can start the process all over again.
+		return errors.New("Updated deployment's replicas to satisfy strategy")
 	}
 	return nil
 }
@@ -135,7 +242,7 @@ func (r *BatonStrategiesyRunner) migrateSuplusPodToOther(
 				continue
 			}
 
-			err = r.monitorNewPodsUntilReady(deployment, hash, observedPods)
+			err = r.monitorNewPodsUntilReady(deployment, &hash, observedPods)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to monitor new pod"))
 				continue
@@ -224,7 +331,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 				continue
 			}
 
-			err = r.monitorNewPodsUntilReady(deployment, hash, observedPods)
+			err = r.monitorNewPodsUntilReady(deployment, &hash, observedPods)
 			if err != nil {
 				r.logger.Error(err, fmt.Sprintf("failed to monitor new pod"))
 				continue
@@ -251,7 +358,7 @@ func (r *BatonStrategiesyRunner) migrateLessPodFromOther(
 
 func (r *BatonStrategiesyRunner) monitorNewPodsUntilReady(
 	deployment appsv1.Deployment,
-	podTemplateHash string,
+	podTemplateHash *string,
 	observedPods []corev1.Pod,
 ) error {
 	namespace := deployment.ObjectMeta.Namespace
@@ -274,7 +381,7 @@ Monitor:
 			}
 
 			filterdCurrentPods := k8s.FilterPods(currentPods, func(p corev1.Pod) bool {
-				if podTemplateHash == p.ObjectMeta.GetLabels()["pod-template-hash"] {
+				if (podTemplateHash == nil) || (*podTemplateHash == p.ObjectMeta.GetLabels()["pod-template-hash"]) {
 					return true
 				}
 				return false

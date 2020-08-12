@@ -16,7 +16,6 @@ limitations under the License.
 package v1
 
 import (
-	"context"
 	"errors"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -205,16 +204,6 @@ func ValidateStrategies(c client.Client, deployment appsv1.Deployment, strategie
 
 	if len(runningPodsScheduledOnStrategiesNode) != len(pods) {
 		return errors.New("Deployment pods should always be on nodes of all strategies")
-	}
-
-	total_keep_pods := GetTotalKeepPods(strategies)
-	if total_keep_pods > len(runningPodsScheduledOnStrategiesNode) {
-		newReplicas := int32(total_keep_pods + 1)
-		deployment.Spec.Replicas = &newReplicas
-		if err := c.Update(context.Background(), &deployment); err != nil {
-			return errors.New("failed to update replica count for Deployment")
-		}
-		return errors.New("Deployment replicas must be greater than the total of Keep Pods for strategy, retry from the beginning with more replicas of the pod")
 	}
 	return nil
 }
