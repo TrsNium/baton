@@ -205,5 +205,17 @@ func ValidateStrategies(c client.Client, deployment appsv1.Deployment, strategie
 	if len(runningPodsScheduledOnStrategiesNode) != len(pods) {
 		return errors.New("Deployment pods should always be on nodes of all strategies")
 	}
+
+	totalKeepPods := GetTotalKeepPods(strategies)
+	runningPods := k8s.FilterPods(pods, func(p corev1.Pod) bool {
+		if p.Status.Phase == "Running" {
+			return true
+		}
+		return false
+	})
+	if !(len(runningPods) > totalKeepPods) {
+		return errors.New("The number of running pods must be greater than the sum of all strategy KeepPods")
+	}
+
 	return nil
 }
